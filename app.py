@@ -53,6 +53,9 @@ sensor_options = {s.get("name"): s.get("id") for s in sensors}
 selected_sensor_name = st.selectbox("Select Sensor", options=list(sensor_options.keys()))
 sensor_id = sensor_options[selected_sensor_name]
 
+# Grab the full data dictionary for the selected sensor so we know its Blueprint (Model) ID
+selected_sensor_data = next((s for s in sensors if s["id"] == sensor_id), {})
+
 # --- 2. Input Data ---
 manual_dip = st.number_input("Enter Manual Dip Value (m):", value=0.00, format="%.2f")
 
@@ -120,11 +123,28 @@ if st.button("Submit Calibration", type="primary"):
         readings_resp = requests.post(reading_url, headers=HEADERS, json=reading_payload)
 
         # --- Step 5: Update Maintenance Notes ---
+        # 5a. Dynamically find the correct ID for the "Maintenance Notes" box on this specific sensor's blueprint
+        sensor_model_id = selected_sensor_data.get("sensorModelId")
+        notes_field_id = 4146 # Default fallback
+        
+        models_resp = requests.get(f"{BASE_URL}/org/{ORG_ID}/proj/{PROJ_ID}/sensor-models", headers=HEADERS)
+        if models_resp.status_code == 200:
+            sensor_models = models_resp.json()
+            matching_model = next((m for m in sensor_models if m.get("id") == sensor_model_id), None)
+            
+            if matching_model:
+                # Search the blueprint's fields for one named "Maintenance Notes"
+                for field in matching_model.get("fields", []):
+                    if field.get("name", "").lower() == "maintenance notes":
+                        notes_field_id = field.get("id")
+                        break
+
+        # 5b. Update the dynamically found field
         fields_resp = requests.get(f"{BASE_URL}/org/{ORG_ID}/proj/{PROJ_ID}/sensor-fields", headers=HEADERS)
         field_status = 0
         
         if fields_resp.status_code == 200:
-            target_field = next((f for f in fields_resp.json() if f.get("sensorId") == sensor_id and f.get("sensorModelFieldId") == 4146), None)
+            target_field = next((f for f in fields_resp.json() if f.get("sensorId") == sensor_id and f.get("sensorModelFieldId") == notes_field_id), None)
             
             if target_field:
                 field_instance_id = target_field.get("id")
@@ -135,7 +155,7 @@ if st.button("Submit Calibration", type="primary"):
                 
                 field_payload = {
                     "content": combined_notes, "contentId": field_instance_id,
-                    "projectId": int(PROJ_ID), "sensorId": int(sensor_id), "sensorModelFieldId": 4146 
+                    "projectId": int(PROJ_ID), "sensorId": int(sensor_id), "sensorModelFieldId": notes_field_id 
                 }
                 put_resp = requests.put(f"{BASE_URL}/org/{ORG_ID}/proj/{PROJ_ID}/sensor-fields/{field_instance_id}", headers=HEADERS, json=field_payload)
                 field_status = put_resp.status_code
