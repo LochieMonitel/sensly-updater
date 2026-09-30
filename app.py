@@ -15,6 +15,7 @@ FACTOR_IDS = {
     "b1": 3725           
 }
 MANUAL_DIP_INPUT_ID = "31764"
+NOTES_FIELD_ID = 4146 # Hardcoded since Project 588 uses one universal blueprint
 
 st.set_page_config(page_title="Sensly Calibration", page_icon="📈")
 
@@ -52,9 +53,6 @@ if not sensors:
 sensor_options = {s.get("name"): s.get("id") for s in sensors}
 selected_sensor_name = st.selectbox("Select Sensor", options=list(sensor_options.keys()))
 sensor_id = sensor_options[selected_sensor_name]
-
-# Grab the full data dictionary for the selected sensor so we know its Blueprint (Model) ID
-selected_sensor_data = next((s for s in sensors if s["id"] == sensor_id), {})
 
 # --- 2. Input Data ---
 manual_dip = st.number_input("Enter Manual Dip Value (m):", value=0.00, format="%.2f")
@@ -122,46 +120,36 @@ if st.button("Submit Calibration", type="primary"):
         reading_payload = [{"datetime": current_time_iso, "inputs": {MANUAL_DIP_INPUT_ID: float(manual_dip)}}]
         readings_resp = requests.post(reading_url, headers=HEADERS, json=reading_payload)
 
-        # --- Step 5: Update Maintenance Notes ---
-        # 5a. Dynamically find the correct ID for the "Maintenance Notes" box on this specific sensor's blueprint
-        sensor_model_id = selected_sensor_data.get("sensorModelId")
-        notes_field_id = 4146 # Default fallback
-        
-        models_resp = requests.get(f"{BASE_URL}/org/{ORG_ID}/proj/{PROJ_ID}/sensor-models", headers=HEADERS)
-        if models_resp.status_code == 200:
-            sensor_models = models_resp.json()
-            matching_model = next((m for m in sensor_models if m.get("id") == sensor_model_id), None)
-            
-            if matching_model:
-                # Search the blueprint's fields for one named "Maintenance Notes"
-                for field in matching_model.get("fields", []):
-                    if field.get("name", "").lower() == "maintenance notes":
-                        notes_field_id = field.get("id")
-                        break
-
-        # 5b. Update the dynamically found field
+        # --- Step 5: Update Maintenance Notes (Create or Update) ---
         fields_resp = requests.get(f"{BASE_URL}/org/{ORG_ID}/proj/{PROJ_ID}/sensor-fields", headers=HEADERS)
         field_status = 0
         
         if fields_resp.status_code == 200:
-            target_field = next((f for f in fields_resp.json() if f.get("sensorId") == sensor_id and f.get("sensorModelFieldId") == notes_field_id), None)
+            target_field = next((f for f in fields_resp.json() if f.get("sensorId") == sensor_id and f.get("sensorModelFieldId") == NOTES_FIELD_ID), None)
+            new_note = f"Calibrated on {friendly_time}. Dip reading: {manual_dip:.2f}m. Previous WL: {old_dc_dtw:.3f}m. Offset applied: {calculated_offset:.3f}m."
             
             if target_field:
+                # The note exists, stack the text and UPDATE (PUT)
                 field_instance_id = target_field.get("id")
                 existing_notes = target_field.get("content") or ""
-                new_note = f"Calibrated on {friendly_time}. Dip reading: {manual_dip:.2f}m. Previous WL: {old_dc_dtw:.3f}m. Offset applied: {calculated_offset:.3f}m."
-                
                 combined_notes = f"{new_note}\n{existing_notes}" if existing_notes.strip() else new_note
                 
                 field_payload = {
                     "content": combined_notes, "contentId": field_instance_id,
-                    "projectId": int(PROJ_ID), "sensorId": int(sensor_id), "sensorModelFieldId": notes_field_id 
+                    "projectId": int(PROJ_ID), "sensorId": int(sensor_id), "sensorModelFieldId": NOTES_FIELD_ID 
                 }
-                put_resp = requests.put(f"{BASE_URL}/org/{ORG_ID}/proj/{PROJ_ID}/sensor-fields/{field_instance_id}", headers=HEADERS, json=field_payload)
-                field_status = put_resp.status_code
+                update_resp = requests.put(f"{BASE_URL}/org/{ORG_ID}/proj/{PROJ_ID}/sensor-fields/{field_instance_id}", headers=HEADERS, json=field_payload)
+                field_status = update_resp.status_code
             else:
-                st.warning("Maintenance Notes field not found on this sensor.")
-                field_status = 200 
+                # The note does NOT exist yet, initialize it for the first time (POST)
+                field_payload = {
+                    "content": new_note, "contentId": None,
+                    "projectId": int(PROJ_ID), "sensorId": int(sensor_id), "sensorModelFieldId": NOTES_FIELD_ID 
+                }
+                create_resp = requests.post(f"{BASE_URL}/org/{ORG_ID}/proj/{PROJ_ID}/sensor-fields", headers=HEADERS, json=field_payload)
+                field_status = create_resp.status_code
+        else:
+            field_status = fields_resp.status_code
         
         # --- Final Validation ---
         if cal_resp.status_code == 200 and readings_resp.status_code == 200 and field_status == 200:
