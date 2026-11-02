@@ -111,12 +111,20 @@ st.divider()
 
 if mode == "Sensor Calibration":
     st.subheader("Calibration")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        cal_date = st.date_input("Calibration Date", value=datetime.now(PERTH_TZ).date())
+    with col2:
+        cal_time = st.time_input("Calibration Time", value=datetime.now(PERTH_TZ).time())
+        
     manual_dip = st.number_input("Enter Manual Dip Value (m):", value=0.00, format="%.2f")
 
     if st.button("Submit Calibration", type="primary"):
         with st.spinner("Calculating and updating Sensly..."):
             
-            now_dt = datetime.now(PERTH_TZ)
+            # Combine user inputs into a timezone-aware datetime
+            now_dt = PERTH_TZ.localize(datetime.combine(cal_date, cal_time))
             
             old_p1 = get_active_factor(calibrations, FACTOR_IDS["p1"], now_dt)
             old_b1 = get_active_factor(calibrations, FACTOR_IDS["b1"], now_dt)
@@ -125,41 +133,62 @@ if mode == "Sensor Calibration":
             sg = sg if sg != 0.0 else 1.0  
             dtw_offset = get_active_factor(calibrations, FACTOR_IDS["dtw_offset"], now_dt)
 
-            read_url = f"{BASE_URL}/org/{ORG_ID}/proj/{PROJ_ID}/readings/{sensor_id}?limit=1"
+            # Fetch a larger batch of readings to find the closest one to the custom time
+            read_url = f"{BASE_URL}/org/{ORG_ID}/proj/{PROJ_ID}/readings/{sensor_id}?limit=500"
             read_resp = requests.get(read_url, headers=HEADERS)
             
             if read_resp.status_code != 200 or len(read_resp.json()) == 0:
                 st.error("No original readings found for this sensor.")
                 st.stop()
                 
-            latest = read_resp.json()[0]
-            inputs_data = latest.get("inputs", {})
+            readings = read_resp.json()
+            closest_reading = None
+            min_diff = float('inf')
+            
+            # Find the reading closest to the specified calibration time
+            for r in readings:
+                r_dt = parse_sensly_dt(r.get("datetime"))
+                if r_dt:
+                    diff = abs((r_dt - now_dt).total_seconds())
+                    if diff < min_diff:
+                        min_diff = diff
+                        closest_reading = r
+                        
+            if not closest_reading:
+                st.error("Could not parse reading dates to find the closest match.")
+                st.stop()
+                
+            inputs_data = closest_reading.get("inputs", {})
             pr_val = float(inputs_data.get("31704", 0))
             bp_val = float(inputs_data.get("31697", 0))
             
             if pr_val == 0 or bp_val == 0:
-                st.error("Missing 'pr' or 'bp' in the latest reading! Cannot calculate.")
+                st.error(f"Missing 'pr' or 'bp' in the closest reading found ({closest_reading.get('datetime')})! Cannot calculate.")
                 st.stop()
                 
             old_dtw = old_manual_dip - ((pr_val - bp_val) - (old_p1 - old_b1))
             old_dc_dtw = old_manual_dip - ((old_manual_dip - old_dtw) / sg) + dtw_offset
             
             new_dtw = manual_dip - ((pr_val - bp_val) - (pr_val - bp_val))
-            new_dc_dtw = manual_dip - ((manual_dip - new_dtw) / sg) + dtw_offset
+            new_dc_dtw = manual_dip - ((manual_dip - new_dtw) / sg) + 0.0
             
             calculated_offset = new_dc_dtw - old_dc_dtw
             
-            st.info(f"**Math Summary:**\n* **Old WL:** {old_dc_dtw:.3f}m\n* **New WL:** {new_dc_dtw:.3f}m\n* **Offset Applied:** {calculated_offset:.3f}m")
+            used_reading_dt = parse_sensly_dt(closest_reading.get("datetime"))
+            used_reading_str = used_reading_dt.strftime("%d/%m/%Y %I:%M %p") if used_reading_dt else "Unknown"
+            
+            st.info(f"**Math Summary:**\n* **Reading Used:** {used_reading_str}\n* **Old WL:** {old_dc_dtw:.3f}m\n* **New WL:** {new_dc_dtw:.3f}m\n* **Offset Applied:** {calculated_offset:.3f}m\n* **Note:** DTW Offset has been reset to 0.0m.")
             
             current_time_iso = now_dt.isoformat()
             friendly_time = now_dt.strftime("%d/%m/%Y at %I:%M %p")
             
-            cal_url = f"{BASE_URL}/org/{ORG_ID}/proj/{PROJ_ID}/calibrations/many"
             cal_payload = [
                 {"datetime": current_time_iso, "value": manual_dip, "factorId": FACTOR_IDS["manual_dip"], "sensorId": int(sensor_id)},
                 {"datetime": current_time_iso, "value": pr_val, "factorId": FACTOR_IDS["p1"], "sensorId": int(sensor_id)},
-                {"datetime": current_time_iso, "value": bp_val, "factorId": FACTOR_IDS["b1"], "sensorId": int(sensor_id)}
+                {"datetime": current_time_iso, "value": bp_val, "factorId": FACTOR_IDS["b1"], "sensorId": int(sensor_id)},
+                {"datetime": current_time_iso, "value": 0.0, "factorId": FACTOR_IDS["dtw_offset"], "sensorId": int(sensor_id)}
             ]
+            cal_url = f"{BASE_URL}/org/{ORG_ID}/proj/{PROJ_ID}/calibrations/many"
             cal_resp = requests.post(cal_url, headers=HEADERS, json=cal_payload)
 
             reading_url = f"{BASE_URL}/org/{ORG_ID}/proj/{PROJ_ID}/readings/{sensor_id}"
@@ -171,7 +200,7 @@ if mode == "Sensor Calibration":
             
             if fields_resp.status_code == 200:
                 target_field = next((f for f in fields_resp.json() if f.get("sensorId") == sensor_id and f.get("sensorModelFieldId") == NOTES_FIELD_ID), None)
-                new_note = f"Calibrated on {friendly_time}. Dip reading: {manual_dip:.2f}m. Previous WL: {old_dc_dtw:.3f}m. Offset applied: {calculated_offset:.3f}m."
+                new_note = f"Calibrated on {friendly_time}. Dip reading: {manual_dip:.2f}m. Previous WL: {old_dc_dtw:.3f}m. Offset applied: {calculated_offset:.3f}m (DTW Offset reset to 0)."
                 
                 if target_field:
                     field_instance_id = target_field.get("id")
