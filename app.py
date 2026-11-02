@@ -120,7 +120,18 @@ if mode == "Sensor Calibration":
         
     manual_dip = st.number_input("Enter Manual Dip Value (m):", value=0.00, format="%.2f")
     
-    # New optional notes input field
+    with st.expander("Hardware Replacement (Optional)"):
+        st.markdown("**Sensor Change**")
+        old_sensor_sn = st.text_input("Old Sensor SN:")
+        new_sensor_sn = st.text_input("New Sensor SN:")
+        sensor_reason = st.text_input("Reason for Sensor Change:")
+        
+        st.divider()
+        st.markdown("**Logger Change**")
+        old_logger_sn = st.text_input("Old YDOC Logger SN:")
+        new_logger_sn = st.text_input("New YDOC Logger SN:")
+        logger_reason = st.text_input("Reason for Logger Change:")
+
     user_notes = st.text_area("Additional Notes (Optional):", value="", placeholder="Enter any extra details here...")
 
     if st.button("Submit Calibration", type="primary"):
@@ -201,8 +212,17 @@ if mode == "Sensor Calibration":
             if fields_resp.status_code == 200:
                 target_field = next((f for f in fields_resp.json() if f.get("sensorId") == sensor_id and f.get("sensorModelFieldId") == NOTES_FIELD_ID), None)
                 
-                # Construct base note and append user notes if provided
                 base_note = f"Calibrated on {friendly_time}. Dip reading: {manual_dip:.2f}m. Previous WL: {old_dc_dtw:.3f}m. Offset applied: {calculated_offset:.3f}m (DTW Offset reset to 0)."
+                
+                hw_changes = []
+                if old_sensor_sn or new_sensor_sn:
+                    hw_changes.append(f"- Sensor Swapped: [{old_sensor_sn or 'N/A'}] -> [{new_sensor_sn or 'N/A'}] (Reason: {sensor_reason or 'None'})")
+                if old_logger_sn or new_logger_sn:
+                    hw_changes.append(f"- Logger Swapped: [{old_logger_sn or 'N/A'}] -> [{new_logger_sn or 'N/A'}] (Reason: {logger_reason or 'None'})")
+                
+                if hw_changes:
+                    base_note += "\n" + "\n".join(hw_changes)
+                
                 new_note = f"{base_note}\nNotes: {user_notes.strip()}" if user_notes.strip() else base_note
                 
                 if target_field:
