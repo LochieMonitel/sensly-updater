@@ -15,7 +15,7 @@ FACTOR_IDS = {
     "p1": 3724,         
     "b1": 3725,
     "dtw_offset": 3757,
-    "delete_ec": 4039,         # Updated to the correct ID
+    "delete_ec": 4039,         
     "delete_water": 3763,
     "ec_offset": 3758
 }
@@ -42,7 +42,6 @@ def parse_sensly_dt(dt_str):
         return None
 
 def get_active_factor(calibrations_list, factor_id, target_dt):
-    """Finds the chronologically accurate calibration value acting on a specific target datetime."""
     active_value = 0.0
     latest_time = datetime.min.replace(tzinfo=timezone.utc)
     
@@ -57,7 +56,6 @@ def get_active_factor(calibrations_list, factor_id, target_dt):
                 latest_time = cal_dt
                 active_value = float(c.get("value", 0.0))
         else:
-            # Base calibration
             if latest_time == datetime.min.replace(tzinfo=timezone.utc):
                 active_value = float(c.get("value", 0.0))
                 
@@ -97,7 +95,6 @@ sensor_options = {s.get("name"): s.get("id") for s in sensors}
 selected_sensor_name = st.selectbox("Select Sensor", options=list(sensor_options.keys()))
 sensor_id = sensor_options[selected_sensor_name]
 
-# Fetch full calibration history to ensure mathematical accuracy
 sensor_url = f"{BASE_URL}/org/{ORG_ID}/proj/{PROJ_ID}/sensors/{sensor_id}"
 sensor_resp = requests.get(sensor_url, headers=HEADERS)
 cals_url = f"{BASE_URL}/org/{ORG_ID}/proj/{PROJ_ID}/calibrations?sensorId={sensor_id}"
@@ -107,7 +104,6 @@ if sensor_resp.status_code != 200:
     st.error("Failed to fetch sensor details.")
     st.stop()
     
-# Combine base calibrations and historical calibrations
 calibrations = sensor_resp.json().get("calibrations", []) + (cals_resp.json() if cals_resp.status_code == 200 else [])
 
 mode = st.radio("Select Action:", ["Sensor Calibration", "Manual Data Edits"], horizontal=True)
@@ -126,7 +122,7 @@ if mode == "Sensor Calibration":
             old_b1 = get_active_factor(calibrations, FACTOR_IDS["b1"], now_dt)
             old_manual_dip = get_active_factor(calibrations, FACTOR_IDS["manual_dip"], now_dt)
             sg = get_active_factor(calibrations, 3738, now_dt)
-            sg = sg if sg != 0.0 else 1.0  # Prevent divide-by-zero
+            sg = sg if sg != 0.0 else 1.0  
             dtw_offset = get_active_factor(calibrations, FACTOR_IDS["dtw_offset"], now_dt)
 
             read_url = f"{BASE_URL}/org/{ORG_ID}/proj/{PROJ_ID}/readings/{sensor_id}?limit=1"
@@ -240,6 +236,9 @@ elif mode == "Manual Data Edits":
             
         offset_date = st.date_input("Offset Start Date", value=None)
         offset_time = st.time_input("Offset Start Time", value=None)
+        
+        offset_end_date = st.date_input("Offset End Date (Optional)", value=None)
+        offset_end_time = st.time_input("Offset End Time (Optional)", value=None)
 
     if st.button("Apply Edits", type="primary"):
         with st.spinner("Applying edits..."):
@@ -276,7 +275,6 @@ elif mode == "Manual Data Edits":
                 offset_dt = datetime.combine(offset_date, offset_time)
                 offset_iso = PERTH_TZ.localize(offset_dt)
                 
-                # Fetch active offset at the EXACT moment you are inserting this change
                 active_ec_offset = get_active_factor(calibrations, FACTOR_IDS["ec_offset"], offset_iso)
                 active_dtw_offset = get_active_factor(calibrations, FACTOR_IDS["dtw_offset"], offset_iso)
                 
@@ -287,6 +285,18 @@ elif mode == "Manual Data Edits":
                 if apply_dtw_offset:
                     true_dtw_offset = active_dtw_offset + dtw_target_offset
                     cal_payload.append({"datetime": offset_iso.isoformat(), "value": true_dtw_offset, "factorId": FACTOR_IDS["dtw_offset"], "sensorId": int(sensor_id)})
+                    
+                if offset_end_date and offset_end_time:
+                    offset_end_dt = datetime.combine(offset_end_date, offset_end_time)
+                    offset_end_iso = PERTH_TZ.localize(offset_end_dt)
+                    
+                    active_ec_offset_end = get_active_factor(calibrations, FACTOR_IDS["ec_offset"], offset_end_iso)
+                    active_dtw_offset_end = get_active_factor(calibrations, FACTOR_IDS["dtw_offset"], offset_end_iso)
+                    
+                    if apply_ec_offset:
+                        cal_payload.append({"datetime": offset_end_iso.isoformat(), "value": active_ec_offset_end, "factorId": FACTOR_IDS["ec_offset"], "sensorId": int(sensor_id)})
+                    if apply_dtw_offset:
+                        cal_payload.append({"datetime": offset_end_iso.isoformat(), "value": active_dtw_offset_end, "factorId": FACTOR_IDS["dtw_offset"], "sensorId": int(sensor_id)})
 
             if not cal_payload:
                 st.warning("No edits were selected to be applied.")
