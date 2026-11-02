@@ -15,7 +15,7 @@ FACTOR_IDS = {
     "p1": 3724,         
     "b1": 3725,
     "dtw_offset": 3757,
-    "delete_ec": 3766,         # Replace with actual ID for Delete_EC
+    "delete_ec": 4039,         # Replace with actual ID for Delete_EC
     "delete_water": 3763,      # Delete_Water_Level ID
     "ec_offset": 3758          # Conductivity_Offset ID
 }
