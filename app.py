@@ -119,11 +119,13 @@ if mode == "Sensor Calibration":
         cal_time = st.time_input("Calibration Time", value=datetime.now(PERTH_TZ).time())
         
     manual_dip = st.number_input("Enter Manual Dip Value (m):", value=0.00, format="%.2f")
+    
+    # New optional notes input field
+    user_notes = st.text_area("Additional Notes (Optional):", value="", placeholder="Enter any extra details here...")
 
     if st.button("Submit Calibration", type="primary"):
         with st.spinner("Calculating and updating Sensly..."):
             
-            # Combine user inputs into a timezone-aware datetime
             now_dt = PERTH_TZ.localize(datetime.combine(cal_date, cal_time))
             
             old_p1 = get_active_factor(calibrations, FACTOR_IDS["p1"], now_dt)
@@ -133,7 +135,6 @@ if mode == "Sensor Calibration":
             sg = sg if sg != 0.0 else 1.0  
             dtw_offset = get_active_factor(calibrations, FACTOR_IDS["dtw_offset"], now_dt)
 
-            # Fetch a larger batch of readings to find the closest one to the custom time
             read_url = f"{BASE_URL}/org/{ORG_ID}/proj/{PROJ_ID}/readings/{sensor_id}?limit=500"
             read_resp = requests.get(read_url, headers=HEADERS)
             
@@ -145,7 +146,6 @@ if mode == "Sensor Calibration":
             closest_reading = None
             min_diff = float('inf')
             
-            # Find the reading closest to the specified calibration time
             for r in readings:
                 r_dt = parse_sensly_dt(r.get("datetime"))
                 if r_dt:
@@ -200,12 +200,15 @@ if mode == "Sensor Calibration":
             
             if fields_resp.status_code == 200:
                 target_field = next((f for f in fields_resp.json() if f.get("sensorId") == sensor_id and f.get("sensorModelFieldId") == NOTES_FIELD_ID), None)
-                new_note = f"Calibrated on {friendly_time}. Dip reading: {manual_dip:.2f}m. Previous WL: {old_dc_dtw:.3f}m. Offset applied: {calculated_offset:.3f}m (DTW Offset reset to 0)."
+                
+                # Construct base note and append user notes if provided
+                base_note = f"Calibrated on {friendly_time}. Dip reading: {manual_dip:.2f}m. Previous WL: {old_dc_dtw:.3f}m. Offset applied: {calculated_offset:.3f}m (DTW Offset reset to 0)."
+                new_note = f"{base_note}\nNotes: {user_notes.strip()}" if user_notes.strip() else base_note
                 
                 if target_field:
                     field_instance_id = target_field.get("id")
                     existing_notes = target_field.get("content") or ""
-                    combined_notes = f"{new_note}\n{existing_notes}" if existing_notes.strip() else new_note
+                    combined_notes = f"{new_note}\n\n{existing_notes}" if existing_notes.strip() else new_note
                     
                     field_payload = {
                         "content": combined_notes, "contentId": field_instance_id,
