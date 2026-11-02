@@ -26,8 +26,7 @@ PERTH_TZ = pytz.timezone('Australia/Perth')
 
 st.set_page_config(page_title="Sensly Calibration & Editing", page_icon="📈")
 
-# Add the Monitel logo to the top left corner
-st.logo("monitel-logo-full-colour-rgb-900px-w-72ppi.png")
+
 
 # ==========================================
 # HELPER FUNCTIONS
@@ -71,6 +70,9 @@ st.title("Sensly Calibration & Data Editor")
 st.caption("BCI Test Project (588)")
 
 with st.sidebar:
+    # This forces the logo to span the full width of the sidebar
+    st.image("monitel-logo-full-colour-rgb-900px-w-72ppi.png", use_container_width=True)
+    
     st.header("Settings")
     api_key = st.text_input("Enter Sensly API Key:", type="password")
 
