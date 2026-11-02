@@ -26,6 +26,9 @@ PERTH_TZ = pytz.timezone('Australia/Perth')
 
 st.set_page_config(page_title="Sensly Calibration & Editing", page_icon="📈")
 
+# Add the Monitel logo to the top left corner
+st.logo("monitel-logo-full-colour-rgb-900px-w-72ppi.png")
+
 # ==========================================
 # HELPER FUNCTIONS
 # ==========================================
